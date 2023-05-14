@@ -1,0 +1,145 @@
+{
+  "proposal": {
+    "title": "Add Specs: Resolva",
+    "description": "Adding new specification support for domain name resolution over Lava",
+    "specs": [
+      {
+        "index": "RESOLVA",
+        "name": "resolva",
+        "enabled": true,
+        "reliability_threshold": 268435455,
+        "data_reliability_enabled": false,
+        "block_distance_for_finalized_data": 0,
+        "blocks_in_finalization_proof": 1,
+        "average_block_time": "1000",
+        "allowed_block_lag_for_qos_sync": "10",
+        "min_stake_provider": {
+          "denom": "ulava",
+          "amount": "50000000000"
+        },
+        "min_stake_client": {
+          "denom": "ulava",
+          "amount": "5000000000"
+        },
+        "apis": [
+          {
+            "name": "nameresolver.NameResolver/Resolve",
+            "block_parsing": {
+              "parser_arg": [],
+              "parser_func": "DEFAULT"
+            },
+            "compute_units": "10",
+            "enabled": true,
+            "api_interfaces": [
+              {
+                "category": {
+                  "deterministic": true,
+                  "local": false,
+                  "subscription": false,
+                  "stateful": 0
+                },
+                "interface": "grpc",
+                "type": "",
+                "extra_compute_units": "0"
+              }
+            ]
+          },
+          {
+            "name": "nameresolver.NameResolver/ReverseResolve",
+            "block_parsing": {
+              "parser_arg": [],
+              "parser_func": "DEFAULT"
+            },
+            "compute_units": "10",
+            "enabled": true,
+            "api_interfaces": [
+              {
+                "category": {
+                  "deterministic": true,
+                  "local": false,
+                  "subscription": false,
+                  "stateful": 0
+                },
+                "interface": "grpc",
+                "type": "",
+                "extra_compute_units": "0"
+              }
+            ]
+          },
+          {
+            "name": "nameresolver.NameResolver/GetBlockNumber",
+            "block_parsing": {
+              "parser_arg": [],
+              "parser_func": "DEFAULT"
+            },
+            "compute_units": "10",
+            "enabled": true,
+            "api_interfaces": [
+              {
+                "category": {
+                  "deterministic": true,
+                  "local": false,
+                  "subscription": false,
+                  "stateful": 0
+                },
+                "interface": "grpc",
+                "type": "",
+                "extra_compute_units": "0"
+              }
+            ],
+            "parsing": {
+              "function_template": "",
+              "function_tag": "getBlockNumber",
+              "result_parsing": {
+                "parser_arg": [
+                  "0",
+                  "height"
+                ],
+                "parser_func": "PARSE_CANONICAL"
+              }
+            }
+          },
+          {
+            "name": "nameresolver.NameResolver/GetBlockByNumber",
+            "block_parsing": {
+              "parser_arg": [
+                "height",
+                "=",
+                "0"
+              ],
+              "parser_func": "PARSE_DICTIONARY_OR_ORDERED"
+            },
+            "compute_units": "10",
+            "enabled": true,
+            "api_interfaces": [
+              {
+                "category": {
+                  "deterministic": true,
+                  "local": false,
+                  "subscription": false,
+                  "stateful": 0
+                },
+                "interface": "grpc",
+                "type": "",
+                "extra_compute_units": "0"
+              }
+            ],
+            "parsing": {
+              "function_template": "{\"height\":\"%d\"}",
+              "function_tag": "getBlockByNumber",
+              "result_parsing": {
+                "parser_arg": [
+                  "0",
+                  "hash"
+                ],
+                "parser_func": "PARSE_CANONICAL",
+                "encoding": "hex"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "deposit": "10000000ulava"
+}

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+option go_package = "grpcserver/nameresolver";
+option java_multiple_files = true;
+option java_package = "grpcserver.nameresolver";
+option java_outer_classname = "NameResolverProto";
+
+package nameresolver;
+
+// The greeting service definition.
+service NameResolver {
+  // Sends a greeting
+  rpc Resolve (ResolveRequest) returns (ResolveReplay) {}
+  rpc ReverseResolve (ReverseResolveRequest) returns (ReverseResolveReplay) {}
+  rpc GetBlockNumber (Empty) returns (BlockNumberReply) {}
+  rpc GetBlockByNumber (BlockByNumberRequest) returns (BlockByNumberReplay) {}
+}
+
+message Empty {}
+
+// The request message containing the user's name.
+message ResolveRequest {
+  string domain = 1;
+}
+
+// The response message containing the greetings
+message ResolveReplay {
+  bytes address = 1;
+}
+
+message ReverseResolveRequest{
+  bytes address = 1;
+}
+
+message ReverseResolveReplay{
+  string domain = 1;
+}
+
+message BlockNumberReply {
+  uint64 height = 1;
+}
+
+message BlockByNumberRequest {
+  int64 height = 1;
+}
+
+message BlockByNumberReplay {
+  string hash = 1;
+}
+
+
