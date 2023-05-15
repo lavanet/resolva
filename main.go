@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"github.com/Zilliqa/gozilliqa-sdk/provider"
 	"github.com/ethereum/go-ethereum/common"
@@ -9,9 +11,12 @@ import (
 	"github.com/unstoppabledomains/resolution-go/v3"
 	"github.com/unstoppabledomains/resolution-go/v3/namingservice"
 	"google.golang.org/grpc/reflection"
+	"io"
 	"log"
 	"math/big"
 	"net"
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -22,18 +27,20 @@ import (
 type grpcServer struct {
 	ethClient      *ethclient.Client
 	polygonClient  *ethclient.Client
+	stargazeURL    string
+	osmoURL        string
 	namingServices map[string]resolution.NamingService
 	nameresolver.UnimplementedNameResolverServer
 }
 
-func NewGRPCServer(ethURL string, polyginURL string, zilliqaURL string) (*grpcServer, error) {
-	client, err := ethclient.Dial(ethURL)
+func NewGRPCServer(ethURL string, polyginURL string, zilliqaURL string, stargazeURL string, osmoURL string) (*grpcServer, error) {
+	ethClient, err := ethclient.Dial(ethURL)
 	if err != nil {
 		panic(err)
 	}
 	polClient, err := ethclient.Dial(polyginURL)
 	unsBuilder := resolution.NewUnsBuilder()
-	unsBuilder.SetContractBackend(client)
+	unsBuilder.SetContractBackend(ethClient)
 	unsBuilder.SetL2ContractBackend(polClient)
 	zilliqaProvider := provider.NewProvider(zilliqaURL)
 	zns, err := resolution.NewZnsBuilder().SetProvider(zilliqaProvider).Build()
@@ -42,17 +49,25 @@ func NewGRPCServer(ethURL string, polyginURL string, zilliqaURL string) (*grpcSe
 	}
 	uns, err := unsBuilder.Build()
 	if err != nil {
-		fmt.Println("ERROR", err)
 		return nil, err
 	}
 
-	namingServices := map[string]resolution.NamingService{namingservice.UNS: uns, namingservice.ZNS: zns}
-	return &grpcServer{polygonClient: polClient, ethClient: client, namingServices: namingServices}, nil
+	namingServices := map[string]resolution.NamingService{
+		namingservice.UNS: uns,
+		namingservice.ZNS: zns,
+	}
+	return &grpcServer{
+		polygonClient:  polClient,
+		ethClient:      ethClient,
+		stargazeURL:    stargazeURL,
+		osmoURL:        osmoURL,
+		namingServices: namingServices,
+	}, nil
 }
 
-func (s *grpcServer) Resolve(context context.Context, req *nameresolver.ResolveRequest) (*nameresolver.ResolveReplay, error) {
-
+func (s *grpcServer) Resolve(ctx context.Context, req *nameresolver.ResolveRequest) (*nameresolver.ResolveReplay, error) {
 	domain := req.GetDomain()
+	fmt.Println("Got Domain:", domain)
 
 	if strings.HasSuffix(domain, ".eth") {
 		address, err := ens.Resolve(s.ethClient, req.Domain)
@@ -62,29 +77,31 @@ func (s *grpcServer) Resolve(context context.Context, req *nameresolver.ResolveR
 		return &nameresolver.ResolveReplay{Address: address.Bytes()}, nil
 	}
 
-	if strings.HasSuffix(domain, ".crypto") || strings.HasSuffix(domain, ".zil") {
-		namingServiceName, err := resolution.DetectNamingService(domain)
+	if strings.HasSuffix(domain, ".cosmos") {
+		address, err := s.queryStargazeNames(domain)
+
 		if err != nil {
-			return nil, err
-		}
-
-		if s.namingServices[namingServiceName] != nil {
-			var ticker string
-			if namingServiceName == "UNS" {
-				ticker = "ETH"
-			} else {
-				ticker = "BTC"
-			}
-
-			resolvedAddress, err := s.namingServices[namingServiceName].Addr(domain, ticker)
-			if err != nil {
-				return nil, err
-			}
-			return &nameresolver.ResolveReplay{Address: []byte(resolvedAddress)}, nil
+			return &nameresolver.ResolveReplay{Address: []byte(*address)}, nil
 		}
 	}
 
-	return nil, fmt.Errorf("unsupported domain suffix: %s", req.Domain)
+	address, err := s.queryICNS(domain)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if address != nil {
+		return &nameresolver.ResolveReplay{Address: []byte(*address)}, nil
+	}
+
+	address, err = s.queryUnstoppable(domain)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &nameresolver.ResolveReplay{Address: []byte(*address)}, nil
 }
 
 func (s *grpcServer) ReverseResolve(context context.Context, req *nameresolver.ReverseResolveRequest) (*nameresolver.ReverseResolveReplay, error) {
@@ -115,11 +132,94 @@ func (s *grpcServer) GetBlockByNumber(ctx context.Context, request *nameresolver
 	return &nameresolver.BlockByNumberReplay{Hash: block.Hash().Hex()}, nil
 }
 
+func (s *grpcServer) queryUnstoppable(domain string) (*string, error) {
+	namingServiceName, err := resolution.DetectNamingService(domain)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported domain suffix: %s", domain)
+	}
+
+	if s.namingServices[namingServiceName] != nil {
+		var ticker string
+		if namingServiceName == "UNS" {
+			ticker = "ETH"
+		} else {
+			ticker = "BTC"
+		}
+
+		resolvedAddress, err := s.namingServices[namingServiceName].Addr(domain, ticker)
+		if err != nil {
+			return nil, err
+		}
+		return &resolvedAddress, nil
+	}
+
+	return nil, fmt.Errorf("unsupported domain suffix %s", domain)
+}
+
+func (s *grpcServer) queryICNS(domain string) (*string, error) {
+	query := fmt.Sprintf("{\"address_by_icns\": {\"icns\": \"%s\"}}", domain)
+	resJson, err := s.queryWasmSmartContract(s.osmoURL, "osmo1xk0s8xgktn9x5vwcgtjdxqzadg88fgn33p8u9cnpdxwemvxscvast52cdd", query)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := (*resJson)["code"]; ok {
+		return nil, fmt.Errorf("ERROR from osmo: %v", (*resJson)["message"])
+	}
+
+	address := (*resJson)["bech32_address"]
+
+	if address == nil {
+		addressStr := ""
+		return &addressStr, nil
+	}
+
+	addressStr := address.(string)
+	return &addressStr, nil
+}
+
+func (s *grpcServer) queryStargazeNames(domain string) (*string, error) {
+	name := strings.TrimSuffix(domain, ".cosmos")
+	query := fmt.Sprintf("{\"associated_address\":{\"name\":\"%s\"}}", name)
+	resJson, err := s.queryWasmSmartContract(s.stargazeURL, "stars1fx74nkqkw2748av8j7ew7r3xt9cgjqduwn8m0ur5lhe49uhlsasszc5fhr", query)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := (*resJson)["code"]; !ok {
+		address := (*resJson)["data"].(string)
+		return &address, nil
+	}
+
+	return nil, nil
+}
+
+func (s *grpcServer) queryWasmSmartContract(chainURL string, contractAddres string, query string) (*map[string]interface{}, error) {
+	queryData := []byte(query)
+	encQuery := url.QueryEscape(base64.StdEncoding.EncodeToString(queryData))
+	fullURL := fmt.Sprintf("%s/cosmwasm/wasm/v1/contract/%s/smart/%s", chainURL, contractAddres, encQuery)
+	response, err := http.Get(fullURL)
+	if err != nil {
+		return nil, err
+	}
+	resBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	var resJson map[string]interface{}
+	json.Unmarshal(resBody, &resJson)
+	return &resJson, nil
+}
+
 func main() {
 
 	resolveServer, err := NewGRPCServer("https://g.w.lavanet.xyz:443/gateway/eth/rpc-http/e7ffcc99b6bba339b0752aa98affe920",
 		"https://g.w.lavanet.xyz:443/gateway/polygon1/rpc-http/e7ffcc99b6bba339b0752aa98affe920",
 		"https://api.zilliqa.com",
+		"https://rest.stargaze-apis.com",
+		"https://g.w.lavanet.xyz:443/gateway/cos3/rest/e7ffcc99b6bba339b0752aa98affe920",
 	)
 
 	if err != nil {
