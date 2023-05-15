@@ -80,7 +80,7 @@ func (s *grpcServer) Resolve(ctx context.Context, req *nameresolver.ResolveReque
 	if strings.HasSuffix(domain, ".cosmos") {
 		address, err := s.queryStargazeNames(domain)
 
-		if err != nil {
+		if err == nil {
 			return &nameresolver.ResolveReplay{Address: []byte(*address)}, nil
 		}
 	}
@@ -91,7 +91,7 @@ func (s *grpcServer) Resolve(ctx context.Context, req *nameresolver.ResolveReque
 		return nil, err
 	}
 
-	if address != nil {
+	if address != nil && *address != "" {
 		return &nameresolver.ResolveReplay{Address: []byte(*address)}, nil
 	}
 
@@ -157,7 +157,9 @@ func (s *grpcServer) queryUnstoppable(domain string) (*string, error) {
 }
 
 func (s *grpcServer) queryICNS(domain string) (*string, error) {
-	query := fmt.Sprintf("{\"address_by_icns\": {\"icns\": \"%s\"}}", domain)
+	//query := fmt.Sprintf("{\"address_by_icns\": {\"icns\": \"%s\"}}", domain)
+	splitted := strings.Split(domain, ".")
+	query := fmt.Sprintf("{\"address\": {\"bech32_prefix\": \"%s\", \"name\": \"%s\"}}", splitted[1], splitted[0])
 	resJson, err := s.queryWasmSmartContract(s.osmoURL, "osmo1xk0s8xgktn9x5vwcgtjdxqzadg88fgn33p8u9cnpdxwemvxscvast52cdd", query)
 
 	if err != nil {
@@ -168,7 +170,7 @@ func (s *grpcServer) queryICNS(domain string) (*string, error) {
 		return nil, fmt.Errorf("ERROR from osmo: %v", (*resJson)["message"])
 	}
 
-	address := (*resJson)["bech32_address"]
+	address := (*resJson)["address"]
 
 	if address == nil {
 		addressStr := ""
@@ -188,12 +190,13 @@ func (s *grpcServer) queryStargazeNames(domain string) (*string, error) {
 		return nil, err
 	}
 
-	if _, ok := (*resJson)["code"]; !ok {
-		address := (*resJson)["data"].(string)
-		return &address, nil
+	if _, ok := (*resJson)["code"]; ok {
+		return nil, fmt.Errorf("ERROR from stargaze: %v", (*resJson)["message"])
 	}
 
-	return nil, nil
+	address := (*resJson)["data"].(string)
+	return &address, nil
+
 }
 
 func (s *grpcServer) queryWasmSmartContract(chainURL string, contractAddres string, query string) (*map[string]interface{}, error) {
@@ -210,6 +213,7 @@ func (s *grpcServer) queryWasmSmartContract(chainURL string, contractAddres stri
 	}
 	var resJson map[string]interface{}
 	json.Unmarshal(resBody, &resJson)
+	fmt.Println(resJson)
 	return &resJson, nil
 }
 
